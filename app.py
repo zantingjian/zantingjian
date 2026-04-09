@@ -1,4 +1,4 @@
-# 暂停键桌游推荐助手 - 最终优化版（难度1-5 两位小数+人数全部+多标签）
+# 暂停键桌游推荐助手 - 最终完美版（隐藏管理应用按钮+全功能）
 import streamlit as st
 import pandas as pd
 import re
@@ -9,48 +9,69 @@ st.set_page_config(
     page_icon="🎲",
     layout="wide"
 )
-st.title("🎲 暂停键桌游推荐助手")
 
-# ---------------------- 核心：加载数据（修复编码报错） ----------------------
+# ---------------------- ✅ 核心：彻底隐藏右下角「Manage app 管理应用」按钮 ----------------------
+hide_streamlit_ui = """
+<style>
+/* 精准定位Streamlit云端「Manage app 管理应用」按钮 */
+[aria-label="Manage app"],
+[data-testid="stActionButton"],
+.stActionButton,
+/* 隐藏右下角悬浮容器，彻底清除按钮 */
+.stApp > div:nth-child(3),
+.stApp > header + div > div > div > button,
+/* 兜底：隐藏所有右下角操作控件 */
+[class*="stActionButton"],
+[data-testid="stHeaderActionElements"] > div > button {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    height: 0 !important;
+    width: 0 !important;
+}
+</style>
+"""
+st.markdown(hide_streamlit_ui, unsafe_allow_html=True)
+
+# ---------------------- 标题 ----------------------
+st.title("🎲 暂停键桌游推荐助手")
+st.caption("支持多分类标签筛选 | 默认显示全部游戏 | 难度1.00-5.00")
+
+# ---------------------- 加载数据（修复中文编码） ----------------------
 @st.cache_data(ttl=3600)
 def load_data():
-    # 修复UnicodeDecodeError报错，兼容Windows中文CSV
-    df = pd.read_csv(
-        "board_games.csv",
-        engine="python",
-        encoding="gbk",          
-        encoding_errors="replace",
-        on_bad_lines="skip",     
-        skip_blank_lines=True    
-    )
-    
-    # 数据清洗：游戏时长转数字
+    try:
+        df = pd.read_csv(
+            "board_games.csv",
+            engine="python",
+            encoding="gbk",
+            encoding_errors="replace",
+            on_bad_lines="skip",
+            skip_blank_lines=True
+        )
+    except:
+        df = pd.read_csv(
+            "board_games.csv",
+            engine="python",
+            encoding="utf-8-sig",
+            encoding_errors="replace",
+            on_bad_lines="skip",
+            skip_blank_lines=True
+        )
+
+    # 清洗数据
     if "游戏时长(分钟)" in df.columns:
         df["游戏时长(分钟)"] = pd.to_numeric(df["游戏时长(分钟)"], errors="coerce").fillna(0).astype(int)
-    
-    # 数据清洗：难度等级保留两位小数
     if "难度等级" in df.columns:
         df["难度等级"] = pd.to_numeric(df["难度等级"], errors="coerce").fillna(1.00).round(2)
     
     return df
 
-# 加载数据
-try:
-    df = load_data()
-except Exception as e:
-    # 备用编码：如果GBK报错，自动切换UTF-8
-    df = pd.read_csv(
-        "board_games.csv",
-        engine="python",
-        encoding="utf-8-sig",
-        encoding_errors="replace",
-        on_bad_lines="skip",
-        skip_blank_lines=True
-    )
+df = load_data()
 
-# ---------------------- 核心：多分类标签拆分 ----------------------
+# ---------------------- 拆分多分类标签 ----------------------
 def get_all_categories(dataframe):
-    """自动拆分逗号分隔的分类标签，生成筛选列表"""
     category_set = set()
     for value in dataframe["分类"].dropna():
         tags = [tag.strip() for tag in str(value).split(",")]
@@ -59,29 +80,28 @@ def get_all_categories(dataframe):
                 category_set.add(tag)
     return sorted(list(category_set))
 
-# 获取所有分类标签
 all_tags = get_all_categories(df)
 
-# ---------------------- 侧边栏筛选功能 ----------------------
+# ---------------------- 侧边栏筛选 ----------------------
 st.sidebar.header("🔍 筛选条件")
 
-# 1. 游玩人数筛选 【全部】默认选中
+# 1. 游玩人数（默认全部）
 player_num = st.sidebar.selectbox(
     "选择游玩人数",
     options=["全部",1,2,3,4,5,6,7,8,9,10,12,15,20],
     index=0
 )
 
-# 2. 难度等级筛选 ✅ 核心修改：1.00-5.00 小数点后两位
+# 2. 难度等级（1.00-5.00 两位小数）
 difficulty = st.sidebar.slider(
     "难度等级范围",
-    min_value=1.00,    # 固定下限1
-    max_value=5.00,    # 固定上限5
-    value=(1.00, 5.00),# 默认全范围
-    step=0.01          # 精度：两位小数
+    min_value=1.00,
+    max_value=5.00,
+    value=(1.00, 5.00),
+    step=0.01
 )
 
-# 3. 分类标签筛选（支持多选/多标签）
+# 3. 游戏分类（多选，修复显示问题）
 selected_tags = st.sidebar.multiselect(
     "游戏分类（可多选）",
     options=all_tags,
@@ -91,10 +111,10 @@ selected_tags = st.sidebar.multiselect(
 # ---------------------- 搜索功能 ----------------------
 search_key = st.text_input("🔎 搜索桌游名称")
 
-# ---------------------- 数据筛选逻辑 ----------------------
+# ---------------------- 筛选逻辑 ----------------------
 filtered_df = df.copy()
 
-# 匹配推荐人数：全部则不筛选
+# 人数匹配
 def match_players(player_range, target):
     if target == "全部":
         return True
@@ -109,20 +129,20 @@ def match_players(player_range, target):
 
 filtered_df = filtered_df[filtered_df["推荐人数"].apply(lambda x: match_players(x, player_num))]
 
-# 匹配难度等级（1.00-5.00 两位小数）
+# 难度筛选
 filtered_df = filtered_df[
     (filtered_df["难度等级"] >= difficulty[0]) &
     (filtered_df["难度等级"] <= difficulty[1])
 ]
 
-# 匹配分类标签（核心：多标签兼容）
+# 分类筛选
 if selected_tags:
     mask = filtered_df["分类"].apply(
         lambda x: any(tag in str(x).split(",") for tag in selected_tags)
     )
     filtered_df = filtered_df[mask]
 
-# 关键词搜索
+# 搜索筛选
 if search_key.strip():
     filtered_df = filtered_df[filtered_df["桌游名称"].str.contains(search_key, na=False, case=False)]
 
@@ -140,6 +160,7 @@ else:
             
             with col_img:
                 try:
+                    # 云端图片路径：images/文件夹
                     st.image(f"images/{row['图片链接']}", width=250)
                 except:
                     st.write("🖼️ 暂无图片")
@@ -147,7 +168,7 @@ else:
             with col_info:
                 st.markdown(f"**👥 推荐人数**：{row['推荐人数']}")
                 st.markdown(f"**⏱️ 游戏时长**：{row['游戏时长(分钟)']} 分钟")
-                st.markdown(f"**⭐ 难度等级**：{round(row['难度等级'], 2)}")  # 显示两位小数
+                st.markdown(f"**⭐ 难度等级**：{round(row['难度等级'], 2)}")
                 st.markdown(f"**🏷️ 游戏分类**：{row['分类']}")
                 st.markdown(f"**📖 核心玩法**：{row['核心玩法简介']}")
             
@@ -161,3 +182,4 @@ else:
                     st.write("视频加载失败")
 
 st.divider()
+st.caption("✅ 最终版：隐藏管理应用按钮 | 全功能正常 | 界面干净")
